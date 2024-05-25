@@ -158,6 +158,7 @@ class DataDealerModule(BaseModule):
     def open(self):
         super(DataDealerModule, self).open()
         pass
+
 class CheatingDetectionVisModule(DataDealerModule):
     def __init__(self, push_frame_func, interval=0.06, skippable=False):
         super(CheatingDetectionVisModule, self).__init__(push_frame_func, interval, skippable)
