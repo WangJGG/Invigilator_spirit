@@ -8,7 +8,7 @@ from ui.cheating_list_item import Ui_CheatingListItem
 from ui.real_time_catch import Ui_RealTimeCatch
 from utils.common import second2str
 from utils.img_cropper import CropImage
-cnt=0
+
 class FrameData(QListWidgetItem):
     def __init__(self, list_widget: QListWidget, data, filter_idx=0):
         super(FrameData, self).__init__()
@@ -38,7 +38,7 @@ class FrameData(QListWidgetItem):
             super(FrameData.Widget, self).__init__(parent)
             self.setupUi(self)
 class RealTimeCatchItem(QListWidgetItem):
-    def __init__(self, list_widget: QListWidget, img, detection, time_process, cheating_type, frame_num):
+    def __init__(self, list_widget: QListWidget, img, detection, time_process, cheating_type, frame_num,base_dir):
         super(RealTimeCatchItem, self).__init__()
         self.list_widget = list_widget
         self.widget = RealTimeCatchItem.Widget(list_widget)
@@ -48,6 +48,7 @@ class RealTimeCatchItem(QListWidgetItem):
         self.cheating_type = cheating_type
         self.frame_num = frame_num
         self.detection = detection
+        self.base_dir = base_dir
     def add_item(self):
         size = self.sizeHint()
         self.list_widget.insertItem(0, self)
@@ -60,13 +61,11 @@ class RealTimeCatchItem(QListWidgetItem):
         frame = QImage(frame.data, image_width, image_height,
                        image_width * image_depth,
                        QImage.Format_RGB888)
-        name = os.getcwd()
-        print('name1=', name)
+        
         timestamp = strftime('%Y%m%d%H%M%S', localtime())
-        name = f"{name}\\resource\pic\\{timestamp}.jpg"
-        print('name2=', name)
-        flag = frame.save(name, 'JPG', 100)
-        print('flag=', flag)
+        img_path = os.path.join(self.base_dir, f"{timestamp}.jpg")
+        frame.save(img_path, 'JPG', 100)
+
         self.widget.catch_img.setPixmap(QPixmap.fromImage(frame))
         self.widget.time_lbl.setText(f'{second2str(self.time_process)}')
     class Widget(QWidget, Ui_RealTimeCatch):

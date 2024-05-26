@@ -1,6 +1,7 @@
 import csv
 import os
 import time
+from time import strftime, localtime
 from itertools import islice
 from threading import Thread, Lock
 import cv2
@@ -27,12 +28,13 @@ yolov5_weight = './weights/Yolov8s_Classroom.pt'#yolov8s.pt 原模型文件
 alphapose_weight = './weights/Alphapose_halpe136_mobile.torchscript.pth'
 classroom_action_weight = './weights/classroom_action_classifier.torchscript.pth'
 device = 'cuda'
-class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
+class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
     add_cheating_list_signal = QtCore.pyqtSignal(DictData)
     push_frame_signal = QtCore.pyqtSignal(DictData)
-    def __init__(self, parent=None):
+    def __init__(self,parent=None):
         super(CheatingDetectionApp, self).__init__(parent)
-        self.setupUi(self)
+        self.setupUi(self) 
+        self.base_dir = None
         self.video_source = 0
         self.frame_data_list = OffsetList()
         self.opened_source = None
@@ -48,7 +50,7 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
         self.play_video_btn.clicked.connect(self.play_video)
         self.stop_playing_btn.clicked.connect(self.stop_playing)
         self.video_process_bar.valueChanged.connect(self.change_frame)
-        self.push_frame_signal.connect(self.push_frame)
+        self.push_frame_signal.connect(self.push_frame)# 
         # 其他事件
         def local_to_cheater(x):
             self.stop_playing()
@@ -103,6 +105,11 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
         self.open_source_lock.acquire(blocking=True)
         if self.opened_source is not None:
             self.close_source()
+
+        start_time = strftime('%Y%m%d%H%M%S', localtime())
+        self.base_dir = os.path.join(os.getcwd(), 'resource', 'pic', start_time)
+        os.makedirs(self.base_dir, exist_ok=True)
+
         frame = np.zeros((720, 960, 3), np.uint8)
         (f_w, f_h), _ = cv2.getTextSize("Loading", cv2.FONT_HERSHEY_TRIPLEX, 1, 2)
         cv2.putText(frame, "Loading", (int((960 - f_w) / 2), int((720 - f_h) / 2)),
@@ -209,7 +216,7 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
                 detection = detection[:4].clone()
                 detection[2:] = detection[2:] - detection[:2]
                 RealTimeCatchItem(self.real_time_catch_list, frame, detection, time_process, cheating_type,
-                                  frame_num).add_item()
+                                  frame_num,self.base_dir).add_item()
             # 实时抓拍列表限制
             real_time_catch_list_count = self.real_time_catch_list.count()
             while real_time_catch_list_count > self.real_time_catch_spin.value():
