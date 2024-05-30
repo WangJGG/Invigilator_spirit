@@ -5,7 +5,7 @@ try:
 except ImportError:
     pass
 import torch
-from PyQt5 import QtGui
+from PyQt5 import QtGui,QtCore
 from PyQt5.QtWidgets import QMainWindow, QApplication
 from ui.Invigilator_spirit import Ui_MainWindow as Invigilator_spiritMainWindow# 看ui
 from qt_material import apply_stylesheet
@@ -15,10 +15,10 @@ class Invigilator_spiritApp(QMainWindow, Invigilator_spiritMainWindow):
     def __init__(self, parent=None):
         super(Invigilator_spiritApp, self).__init__(parent)
         self.setupUi(self)
-
         self.cheating_detection_widget = CheatingDetectionApp()
         self.cheating_detection_widget.setObjectName("cheating_detection_widget")
         self.tabWidget.addTab(self.cheating_detection_widget, "作弊检测")
+        #self.setWindowFlags(QtCore.Qt.FramelessWindowHint)
     def closeEvent(self, a0: QtGui.QCloseEvent) -> None:
         self.cheating_detection_widget.close()
         super(Invigilator_spiritApp, self).closeEvent(a0)

@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 from ultralytics import YOLO
-class YoloV5Detector:
+class YoloV8Detector:
     def __init__(self, weights, device):
         self.model = YOLO(weights)
         self.device = device

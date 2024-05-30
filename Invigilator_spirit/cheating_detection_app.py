@@ -1,7 +1,7 @@
 import csv
 import os
 import time
-from time import strftime, localtime
+from time import strftime,localtime
 from itertools import islice
 from threading import Thread, Lock
 import cv2
@@ -20,21 +20,24 @@ from pipeline_module.core.task_solution import TaskSolution
 from pipeline_module.pose_modules import AlphaPoseModule
 from pipeline_module.video_modules import VideoModule
 from pipeline_module.vis_modules import CheatingDetectionVisModule
-from pipeline_module.yolo_modules import YoloV5Module
+from pipeline_module.yolo_modules import YoloV8Module
 from Invigilator_spirit.list_items import VideoSourceItem, RealTimeCatchItem, FrameData
 from ui.cheating_detection import Ui_CheatingDetection
 from utils.common import second2str, OffsetList
-yolov5_weight = './weights/Yolov8s_Classroom.pt'#yolov8s.pt 原模型文件
+yolov8_weight = './weights/Yolov8s_Classroom.pt'#yolov8s.pt 原模型文件
 alphapose_weight = './weights/Alphapose_halpe136_mobile.torchscript.pth'
 classroom_action_weight = './weights/classroom_action_classifier.torchscript.pth'
 device = 'cuda'
-class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
+INTERVAL = 0.06
+PROCESS_INTERVAL = 3
+
+class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
     add_cheating_list_signal = QtCore.pyqtSignal(DictData)
     push_frame_signal = QtCore.pyqtSignal(DictData)
-    def __init__(self,parent=None):
+    def __init__(self, parent=None):
         super(CheatingDetectionApp, self).__init__(parent)
-        self.setupUi(self) 
-        self.base_dir = None
+        self.setupUi(self)
+        self.base_dir=None
         self.video_source = 0
         self.frame_data_list = OffsetList()
         self.opened_source = None
@@ -44,13 +47,13 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
         self.num_of_peep = 0
         self.num_of_gazing_around = 0
         self.open_source_lock = Lock()
+        self.close_source_btn.clicked.connect(self.close_source)
         self.video_resource_list.itemClicked.connect(lambda item: self.open_source(item.src))
         self.video_resource_file_list.itemClicked.connect(lambda item: self.open_source(item.src))
-        self.close_source_btn.clicked.connect(self.close_source)
         self.play_video_btn.clicked.connect(self.play_video)
         self.stop_playing_btn.clicked.connect(self.stop_playing)
         self.video_process_bar.valueChanged.connect(self.change_frame)
-        self.push_frame_signal.connect(self.push_frame)# 
+        self.push_frame_signal.connect(self.push_frame)
         # 其他事件
         def local_to_cheater(x):
             self.stop_playing()
@@ -102,14 +105,13 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
                 item = self.cheating_list.item(i)
                 item.setHidden(item.data_.num_of_gazing_around == 0)
     def open_source(self, source):
+        self.video_source=source
         self.open_source_lock.acquire(blocking=True)
         if self.opened_source is not None:
             self.close_source()
-
         start_time = strftime('%Y%m%d%H%M%S', localtime())
         self.base_dir = os.path.join(os.getcwd(), 'resource', 'pic', start_time)
         os.makedirs(self.base_dir, exist_ok=True)
-
         frame = np.zeros((720, 960, 3), np.uint8)
         (f_w, f_h), _ = cv2.getTextSize("Loading", cv2.FONT_HERSHEY_TRIPLEX, 1, 2)
         cv2.putText(frame, "Loading", (int((960 - f_w) / 2), int((720 - f_h) / 2)),
@@ -126,7 +128,7 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
             fps = 25
             self.opened_source = TaskSolution() \
                 .set_source_module(VideoModule(source, fps=fps)) \
-                .set_next_module(YoloV5Module(yolov5_weight, device)) \
+                .set_next_module(YoloV8Module(yolov8_weight, device)) \
                 .set_next_module(AlphaPoseModule(alphapose_weight, device)) \
                 .set_next_module(CheatingActionModule(classroom_action_weight)) \
                 .set_next_module(CheatingDetectionVisModule(lambda d: self.push_frame_signal.emit(d)))
@@ -144,17 +146,20 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
                        QImage.Format_RGB888)
         self.video_screen.setPixmap(QPixmap.fromImage(frame))
         self.time_process_label.setText("00:00:00/00:00:00")
-    def close_source(self):
+    def close_source(self):#####仍然有问题
         if self.opened_source is not None:
             self.stop_playing()
             self.opened_source.close()
             self.opened_source = None
+            self.playing_real_time = False
+            self.playing = None
+            time.sleep(INTERVAL)
             self.frame_data_list.clear()
             self.video_process_bar.setMaximum(-1)
-            self.playing_real_time = False
             self.cheating_list.clear()
             self.real_time_catch_list.clear()
             self.init_cheating_img_data()
+
             self.init_sceeen()
     def push_frame(self, data):
         try:
@@ -171,8 +176,78 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
                 self.add_cheating_list_signal.emit(data)
             if self.playing_real_time:
                 self.video_process_bar.setValue(self.video_process_bar.maximum())
+            self.time_label()
+            if data.frame_num == data.total_frame:
+                self.end(data)
         except Exception as e:
             print(e)
+
+    '''新的一个线程，用于暂停后播放'''
+    def playing_video(self):
+        try:
+            while self.playing is not None and not self.playing_real_time:
+                current_frame = self.video_process_bar.value()
+                max_frame = self.video_process_bar.maximum()
+                min_frame = self.video_process_bar.minimum()
+                data = self.frame_data_list[current_frame]
+                if self.opened_source is None:
+                    self.time_label()
+                if current_frame < 0:
+                    continue
+                elif current_frame < max_frame:
+                    self.video_process_bar.setValue(current_frame + 1-min_frame)
+                    time.sleep(data.interval)
+                else:
+                    if self.opened_source is not None:
+                        self.stop_playing()
+                        self.playing_real_time = True
+                    else:
+                        self.end(data)
+        except Exception as e:
+            print(e)
+
+    def play_video(self):
+        if self.playing is not None:
+            return
+        self.playing = Thread(target=self.playing_video, args=())
+        self.playing.start()
+
+    def stop_playing(self):
+        self.playing_real_time = False
+        self.playing.close()
+        self.playing = None
+
+    def change_frame(self):
+        try:
+            if len(self.frame_data_list) == 0:
+                return
+            current_frame = self.video_process_bar.value()
+            max_frame = self.video_process_bar.maximum()
+            self.playing_real_time = current_frame == max_frame#是否在实时播放
+            if(self.playing_real_time):
+                self.playing = None
+            data = self.frame_data_list[current_frame]
+            frame = data.frame_anno if self.show_box_ckb.isChecked() else data.frame
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = cv2.resize(frame, (self.video_screen.width() - 9, self.video_screen.height() - 9))
+            image_height, image_width, image_depth = frame.shape
+            frame = QImage(frame.data, image_width, image_height,
+                           image_width * image_depth,
+                           QImage.Format_RGB888)
+            self.video_screen.setPixmap(QPixmap.fromImage(frame))
+        except Exception as e:
+            print(e)
+
+    '''时间戳'''
+    def time_label(self):
+        current_frame = self.video_process_bar.value()
+        max_frame = self.video_process_bar.maximum()
+        data = self.frame_data_list[current_frame]
+        maxData = self.frame_data_list[max_frame]
+        current_time_process = second2str(data.time_process)
+        max_time_process = second2str(maxData.time_process)
+        self.time_process_label.setText(f"{current_time_process}/{max_time_process}")
+
     def check_cheating_change(self, data):
         cond = all([self.num_of_passing >= data.num_of_passing,
                     self.num_of_peep >= data.num_of_peep,
@@ -181,23 +256,6 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
         self.num_of_peep = data.num_of_peep
         self.num_of_gazing_around = data.num_of_gazing_around
         return not cond
-    def playing_video(self):
-        try:
-            while self.playing is not None and not self.playing_real_time:
-                current_frame = self.video_process_bar.value()
-                max_frame = self.video_process_bar.maximum()
-                data = self.frame_data_list[current_frame]
-                if current_frame < 0:
-                    continue
-                elif current_frame < max_frame:
-                    if current_frame < max_frame:
-                        self.video_process_bar.setValue(current_frame + 1)
-                    time.sleep(data.interval)
-                else:
-                    self.stop_playing()
-                    self.playing_real_time = True
-        except Exception as e:
-            print(e)
 
     def add_cheating_list(self, data):
         try:
@@ -224,37 +282,28 @@ class CheatingDetectionApp(QWidget,Ui_CheatingDetection):
                 real_time_catch_list_count -= 1
         except Exception as e:
             print(e)
-    def play_video(self):
-        if self.playing is not None:
-            return
-        self.playing = Thread(target=self.playing_video, args=())
-        self.playing.start()
-    def stop_playing(self):
-        if self.playing is not None:
-            self.playing = None
-    def change_frame(self):
-        try:
-            if len(self.frame_data_list) == 0:
-                return
-            current_frame = self.video_process_bar.value()
-            max_frame = self.video_process_bar.maximum()
-            self.playing_real_time = current_frame == max_frame
-            data = self.frame_data_list[current_frame]
-            maxData = self.frame_data_list[max_frame]
-            frame = data.frame_anno if self.show_box_ckb.isChecked() else data.frame
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            frame = cv2.resize(frame, (self.video_screen.width() - 9, self.video_screen.height() - 9))
-            image_height, image_width, image_depth = frame.shape
-            frame = QImage(frame.data, image_width, image_height,
-                           image_width * image_depth,
-                           QImage.Format_RGB888)
-            self.video_screen.setPixmap(QPixmap.fromImage(frame))
-            current_time_process = second2str(data.time_process)
-            max_time_process = second2str(maxData.time_process)
-            self.time_process_label.setText(f"{current_time_process}/{max_time_process}")
-        except Exception as e:
-            print(e)
+
+    def end(self,data):
+        if self.opened_source is not None:
+            self.opened_source.close()
+            self.opened_source = None
+        time.sleep(INTERVAL)
+        frame = np.zeros((720, 960, 3), np.uint8)
+        (f_w, f_h), _ = cv2.getTextSize("END", cv2.FONT_HERSHEY_TRIPLEX, 1, 2)
+        cv2.putText(frame, "END", (int((960 - f_w) / 2), int((720 - f_h) / 2)),
+                    cv2.FONT_HERSHEY_TRIPLEX,
+                    1, (255, 255, 255), 2)
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame = cv2.resize(frame, (self.video_screen.width() - 9, self.video_screen.height() - 9))  # 调整图像大小
+        image_height, image_width, image_depth = frame.shape
+        frame = QImage(frame.data, image_width, image_height,
+                       image_width * image_depth,
+                       QImage.Format_RGB888)
+        self.video_screen.setPixmap(QPixmap.fromImage(frame))
+
+
     def close(self):
         self.close_source()
+
     def open(self):
         pass

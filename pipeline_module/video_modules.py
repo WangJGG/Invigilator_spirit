@@ -20,6 +20,7 @@ class VideoModule(BaseModule):
                 return TASK_DATA_IGNORE
             else:
                 return TASK_DATA_CLOSE
+        data.total_frame=self.cap.get(cv2.CAP_PROP_FRAME_COUNT)
         data.source_fps = self.fps
         data.frame = self.frame
         self.ret, self.frame = self.cap.read()
