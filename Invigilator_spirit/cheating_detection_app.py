@@ -5,16 +5,16 @@ from time import strftime,localtime
 from itertools import islice
 from threading import Thread, Lock
 import cv2
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 import numpy as np
 from PyQt5 import QtCore
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtWidgets import QWidget
-import matplotlib
-matplotlib.use('Agg')
+#import matplotlib
+#matplotlib.use('Agg')
 from pipeline_module.core.base_module import DictData
-plt.rcParams['font.sans-serif'] = ['SimHei']
-plt.rcParams['axes.unicode_minus'] = False
+#plt.rcParams['font.sans-serif'] = ['SimHei']
+#plt.rcParams['axes.unicode_minus'] = False
 from pipeline_module.classroom_action_module import CheatingActionModule
 from pipeline_module.core.task_solution import TaskSolution
 from pipeline_module.pose_modules import AlphaPoseModule
@@ -43,6 +43,7 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
         self.opened_source = None
         self.playing = None
         self.playing_real_time = False
+        self.end_flag=False
         self.num_of_passing = 0
         self.num_of_peep = 0
         self.num_of_gazing_around = 0
@@ -72,7 +73,7 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
         )
     def init_video_source(self):
         VideoSourceItem(self.video_resource_list, "摄像头", 0).add_item()
-        local_source = 'resource/videos/cheating_detection'
+        local_source = 'resource/videos'
         if not os.path.exists(local_source):
             os.makedirs(local_source)
         else:
@@ -104,7 +105,36 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
             for i in range(self.cheating_list.count()):
                 item = self.cheating_list.item(i)
                 item.setHidden(item.data_.num_of_gazing_around == 0)
+
+    def add_cheating_list(self, data):
+        try:
+            FrameData(self.cheating_list, data).add_item()
+            while self.cheating_list.count() > self.cheating_list_spin.value():
+                self.cheating_list.takeItem(0)
+            frame = data.frame
+            detections = data.detections
+            cheating_types = data.pred_class_names
+            time_process = data.time_process
+            frame_num = data.frame_num
+            best_preds = data.best_preds
+            for detection, cheating_type, best_pred in zip(detections, cheating_types, best_preds):
+                if best_pred == 0:
+                    continue
+                detection = detection[:4].clone()
+                detection[2:] = detection[2:] - detection[:2]
+                RealTimeCatchItem(self.real_time_catch_list, frame, detection, time_process, cheating_type,
+                                  frame_num,self.base_dir).add_item()
+            # 实时抓拍列表限制
+            real_time_catch_list_count = self.real_time_catch_list.count()
+            while real_time_catch_list_count > self.real_time_catch_spin.value():
+                self.real_time_catch_list.takeItem(real_time_catch_list_count - 1)
+                real_time_catch_list_count -= 1
+        except Exception as e:
+            print(e)
+
     def open_source(self, source):
+        if self.end_flag==True:
+            self.close()
         self.video_source=source
         self.open_source_lock.acquire(blocking=True)
         if self.opened_source is not None:
@@ -147,20 +177,19 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
         self.video_screen.setPixmap(QPixmap.fromImage(frame))
         self.time_process_label.setText("00:00:00/00:00:00")
     def close_source(self):#####仍然有问题
+        self.stop_playing()
         if self.opened_source is not None:
-            self.stop_playing()
             self.opened_source.close()
             self.opened_source = None
-            self.playing_real_time = False
-            self.playing = None
-            time.sleep(INTERVAL)
-            self.frame_data_list.clear()
-            self.video_process_bar.setMaximum(-1)
-            self.cheating_list.clear()
-            self.real_time_catch_list.clear()
-            self.init_cheating_img_data()
+        time.sleep(INTERVAL)
+        self.end_flag = False
+        self.init_sceeen()
+        self.frame_data_list.clear()
+        self.video_process_bar.setMaximum(-1)
+        self.cheating_list.clear()
+        self.real_time_catch_list.clear()
+        self.init_cheating_img_data()
 
-            self.init_sceeen()
     def push_frame(self, data):
         try:
             max_index = self.frame_data_list.max_index()
@@ -177,8 +206,10 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
             if self.playing_real_time:
                 self.video_process_bar.setValue(self.video_process_bar.maximum())
             self.time_label()
-            if data.frame_num == data.total_frame:
-                self.end(data)
+            if data.frame_num == data.total_frame - 20:
+                self.end()
+            if self.opened_source == None and not self.end_flag:
+                self.init_sceeen()
         except Exception as e:
             print(e)
 
@@ -202,7 +233,7 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
                         self.stop_playing()
                         self.playing_real_time = True
                     else:
-                        self.end(data)
+                        self.end()
         except Exception as e:
             print(e)
 
@@ -214,7 +245,6 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
 
     def stop_playing(self):
         self.playing_real_time = False
-        self.playing.close()
         self.playing = None
 
     def change_frame(self):
@@ -235,6 +265,8 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
                            image_width * image_depth,
                            QImage.Format_RGB888)
             self.video_screen.setPixmap(QPixmap.fromImage(frame))
+            if current_frame==max_frame and self.end_flag:
+                self.end()
         except Exception as e:
             print(e)
 
@@ -257,39 +289,16 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
         self.num_of_gazing_around = data.num_of_gazing_around
         return not cond
 
-    def add_cheating_list(self, data):
-        try:
-            FrameData(self.cheating_list, data).add_item()
-            while self.cheating_list.count() > self.cheating_list_spin.value():
-                self.cheating_list.takeItem(0)
-            frame = data.frame
-            detections = data.detections
-            cheating_types = data.pred_class_names
-            time_process = data.time_process
-            frame_num = data.frame_num
-            best_preds = data.best_preds
-            for detection, cheating_type, best_pred in zip(detections, cheating_types, best_preds):
-                if best_pred == 0:
-                    continue
-                detection = detection[:4].clone()
-                detection[2:] = detection[2:] - detection[:2]
-                RealTimeCatchItem(self.real_time_catch_list, frame, detection, time_process, cheating_type,
-                                  frame_num,self.base_dir).add_item()
-            # 实时抓拍列表限制
-            real_time_catch_list_count = self.real_time_catch_list.count()
-            while real_time_catch_list_count > self.real_time_catch_spin.value():
-                self.real_time_catch_list.takeItem(real_time_catch_list_count - 1)
-                real_time_catch_list_count -= 1
-        except Exception as e:
-            print(e)
 
-    def end(self,data):
+
+    def end(self):
+        self.end_flag=True
         if self.opened_source is not None:
             self.opened_source.close()
             self.opened_source = None
         time.sleep(INTERVAL)
         frame = np.zeros((720, 960, 3), np.uint8)
-        (f_w, f_h), _ = cv2.getTextSize("END", cv2.FONT_HERSHEY_TRIPLEX, 1, 2)
+        (f_w, f_h), _ = cv2.getTextSize("End", cv2.FONT_HERSHEY_TRIPLEX, 1, 2)
         cv2.putText(frame, "END", (int((960 - f_w) / 2), int((720 - f_h) / 2)),
                     cv2.FONT_HERSHEY_TRIPLEX,
                     1, (255, 255, 255), 2)
@@ -300,7 +309,6 @@ class CheatingDetectionApp(QWidget, Ui_CheatingDetection):
                        image_width * image_depth,
                        QImage.Format_RGB888)
         self.video_screen.setPixmap(QPixmap.fromImage(frame))
-
 
     def close(self):
         self.close_source()
