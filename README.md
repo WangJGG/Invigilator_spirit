@@ -1,4 +1,4 @@
-# Final version for Shanghai Final
+# Invigilator_spirit
 ## Author: lyz wjg lyy
 ## 项目简介：
 该系统是一款智能监考系统，能够利用监控视频实时检测和识别考场中的异常行为，并通过框选技术抓拍保存相关图像。
